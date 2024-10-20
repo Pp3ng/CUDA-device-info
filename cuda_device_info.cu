@@ -72,6 +72,56 @@ std::string formatDimension(int x, int y = 0, int z = 0)
        return ss.str();
 }
 
+int getCudaCoresPerSM(int major, int minor)
+{
+       switch (major)
+       {
+       case 2:
+              return 32; // Fermi
+       case 3:
+              return 192; // Kepler
+       case 5:
+              return 128; // Maxwell
+       case 6:
+              return 64; // Pascal
+       case 7:
+              return 64; // Volta/Turing
+       case 8:
+              return 128; // Ampere
+       case 9:
+              return 128; // Hopper
+       default:
+              return 0;
+       }
+}
+std::string getArchitectureName(int major, int minor)
+{
+       if (major == 2)
+              return "Fermi";
+       if (major == 3)
+              return "Kepler";
+       if (major == 5)
+              return "Maxwell";
+       if (major == 6)
+              return "Pascal";
+       if (major == 7)
+       {
+              if (minor == 0)
+                     return "Volta";
+              if (minor == 5)
+                     return "Turing";
+       }
+       if (major == 8)
+       {
+              if (minor == 0)
+                     return "Ampere";
+              if (minor >= 6)
+                     return "Ada Lovelace";
+       }
+       if (major == 9)
+              return "Hopper";
+       return "Unknown";
+}
 // Functions for printing headers, sub-headers, and key-value pairs
 void printHeader(const char *header)
 {
@@ -91,6 +141,22 @@ void printValue(const char *label, const std::string &value)
 void printValueBool(const char *label, bool value)
 {
        printf("%s%-45s%s%s%s\n", CYAN, label, RESET, value ? "Yes" : "No", RESET);
+}
+
+// Format TFLOPS value as a string
+std::string formatTFlops(float tflops)
+{
+       std::stringstream ss;
+       ss << std::fixed << std::setprecision(2) << tflops << " TFLOPS";
+       return ss.str();
+}
+
+// Format percentage value as a string
+std::string formatPercentage(float value)
+{
+       std::stringstream ss;
+       ss << std::fixed << std::setprecision(2) << value << "%";
+       return ss.str();
 }
 
 int main(void)
@@ -116,15 +182,28 @@ int main(void)
               // Basic Device Information
               printHeader("Basic Device Information:");
               printValue("Device Name:", deviceProp.name);
-              printValue("Compute Capability:",
-                         std::to_string(deviceProp.major) + "." + std::to_string(deviceProp.minor));
+              printValue("Compute Capability:", std::to_string(deviceProp.major) + "." + std::to_string(deviceProp.minor) + " (" + getArchitectureName(deviceProp.major, deviceProp.minor) + ")");
               printValue("MultiProcessor Count:",
                          std::to_string(deviceProp.multiProcessorCount) + " SMs");
               printValue("Maximum Threads Per MultiProcessor:",
                          std::to_string(deviceProp.maxThreadsPerMultiProcessor) + " threads");
-              printValue("Device Compute Mode:", std::to_string(deviceProp.computeMode));
+
+              printValue("CUDA Cores per SM:", std::to_string(getCudaCoresPerSM(deviceProp.major, deviceProp.minor)));
+              printValue("Total CUDA Cores:", std::to_string(getCudaCoresPerSM(deviceProp.major, deviceProp.minor) * deviceProp.multiProcessorCount));
+              printValue("Device Compute Mode:", deviceProp.computeMode == cudaComputeModeDefault            ? "Default"
+                                                 : deviceProp.computeMode == cudaComputeModeExclusive        ? "Exclusive"
+                                                 : deviceProp.computeMode == cudaComputeModeProhibited       ? "Prohibited"
+                                                 : deviceProp.computeMode == cudaComputeModeExclusiveProcess ? "Exclusive Process"
+                                                                                                             : "Unknown");
+
               printValueBool("Device Integrated:", deviceProp.integrated);
               printValueBool("Device TCC Driver:", deviceProp.tccDriver);
+              printValue("CUDA Driver Version:", std::to_string([]
+                                                                { int driverVersion; cudaDriverGetVersion(&driverVersion); return driverVersion; }()));
+              printValue("Max Shared Memory Per Block:", formatMemorySize(deviceProp.sharedMemPerBlock));
+              printValue("Max Grid Size:", formatDimension(deviceProp.maxGridSize[0], deviceProp.maxGridSize[1], deviceProp.maxGridSize[2]));
+              printValue("Max Texture Gather Size:", std::to_string(deviceProp.maxTexture2DGather[0]) + " x " + std::to_string(deviceProp.maxTexture2DGather[1]));
+              printValueBool("Unified Memory Support:", deviceProp.unifiedAddressing);
 
               // Memory Information
               printHeader("Memory Information:");
@@ -250,6 +329,18 @@ int main(void)
               printValueBool("Can Map Host Memory:", deviceProp.canMapHostMemory);
               printValueBool("Can Use Host Pointer For Registered Memory:",
                              deviceProp.canUseHostPointerForRegisteredMem);
+              if (deviceProp.major >= 7)
+              {
+                     printValueBool("Tensor Core Support:", true);
+                     printValue("Tensor Core Generation:",
+                                deviceProp.major == 7 ? "First Gen (Volta/Turing)" : deviceProp.major == 8 ? "Second Gen (Ampere)"
+                                                                                 : deviceProp.major == 9   ? "Third Gen (Hopper)"
+                                                                                                           : "Unknown");
+              }
+              else
+              {
+                     printValueBool("Tensor Core Support:", false);
+              }
 
               // PCI Information
               printHeader("PCI Information:");
@@ -266,11 +357,30 @@ int main(void)
 
               // Performance Metrics
               printHeader("Performance Metrics:");
-              float memoryBandwidth = 2.0f * deviceProp.memoryClockRate *
-                                      (deviceProp.memoryBusWidth / 8) / 1.0e6f; // Memory Bandwidth calculation
-              std::stringstream ss;
-              ss << std::fixed << std::setprecision(2) << memoryBandwidth << " GB/s";
-              printValue("Theoretical Memory Bandwidth:", ss.str());
+
+              // Calculate theoretical memory bandwidth
+              printValue("Theoretical Memory Bandwidth:",
+                         (std::stringstream() << std::fixed << std::setprecision(2)
+                                              << (2.0f * (deviceProp.memoryClockRate * 1000.0f) *
+                                                  (deviceProp.memoryBusWidth / 8.0f) / 1.0e9f) // Memory bandwidth = 2 * (memory clock rate) * (memory bus width / 8) / 1e9
+                                              << " GB/s")
+                             .str());
+
+              // Calculate theoretical single-precision floating-point performance (TFLOPS)
+              // Single-precision TFLOPS = 2 * (core clock rate) * (number of cormance (TFLOPS)
+              printValue("Theoretical Single-Precision Performance:", formatTFlops((2.0f * deviceProp.clockRate * 1e-6f *
+                                                                                    getCudaCoresPerSM(deviceProp.major, deviceProp.minor) * deviceProp.multiProcessorCount / 1000.0f)));
+
+              // Calculate theoretical double-precision floating-point performance (TFLOPS)
+              // Note: This is a rough estimate, actual ratio may vary by architecture
+              // Double-precision TFLOPS = Single-precision TFLOPS / 2
+              printValue("Theoretical Double-Precision Performance:", formatTFlops((2.0f * deviceProp.clockRate * 1e-6f *
+                                                                                    getCudaCoresPerSM(deviceProp.major, deviceProp.minor) * deviceProp.multiProcessorCount / 1000.0f) /
+                                                                                   2.0f));
+
+              // Calculate SM utilization
+              // SM utilization = (max threads per SM / max threads per block) * 100
+              printValue("SM Utilization:", formatPercentage((static_cast<float>(deviceProp.maxThreadsPerMultiProcessor) / deviceProp.maxThreadsPerBlock) * 100.0f));
 
               printf("\n%s%s================================================%s\n",
                      BOLDMAGENTA, BOLD, RESET);
