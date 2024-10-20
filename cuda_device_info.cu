@@ -23,7 +23,7 @@
 #define BOLDCYAN "\033[1;36m"
 #define BOLDWHITE "\033[1;37m"
 
-// 格式化函数
+// Format functions for memory size, frequency, and dimensions of threads and blocks for human-readable output
 std::string formatMemorySize(size_t bytes)
 {
        const char *units[] = {"B", "KB", "MB", "GB", "TB"};
@@ -72,6 +72,7 @@ std::string formatDimension(int x, int y = 0, int z = 0)
        return ss.str();
 }
 
+// Functions for printing headers, sub-headers, and key-value pairs
 void printHeader(const char *header)
 {
        printf("\n%s%s%s\n", BOLDCYAN, header, RESET);
