@@ -123,14 +123,10 @@ std::string getArchitectureName(int major, int minor)
        return "Unknown";
 }
 // Functions for printing headers, sub-headers, and key-value pairs
+
 void printHeader(const char *header)
 {
-       printf("\n%s%s%s\n", BOLDCYAN, header, RESET);
-}
-
-void printSubHeader(const char *header)
-{
-       printf("%s%s%s\n", BOLDYELLOW, header, RESET);
+       printf("\n%s%s%s\n", BOLDYELLOW, header, RESET);
 }
 
 void printValue(const char *label, const std::string &value)
@@ -367,7 +363,7 @@ int main(void)
                              .str());
 
               // Calculate theoretical single-precision floating-point performance (TFLOPS)
-              // Single-precision TFLOPS = 2 * (core clock rate) * (number of cormance (TFLOPS)
+              // Single-precision TFLOPS = 2 * (core clock rate) * (number of cores) / 1e12
               printValue("Theoretical Single-Precision Performance:", formatTFlops((2.0f * deviceProp.clockRate * 1e-6f *
                                                                                     getCudaCoresPerSM(deviceProp.major, deviceProp.minor) * deviceProp.multiProcessorCount / 1000.0f)));
 
@@ -381,6 +377,43 @@ int main(void)
               // Calculate SM utilization
               // SM utilization = (max threads per SM / max threads per block) * 100
               printValue("SM Utilization:", formatPercentage((static_cast<float>(deviceProp.maxThreadsPerMultiProcessor) / deviceProp.maxThreadsPerBlock) * 100.0f));
+
+              // Calculate theoretical half-precision floating-point performance (TFLOPS)
+              float halfPrecisionTFLOPS = (4.0f * deviceProp.clockRate * 1e-6f *
+                                           getCudaCoresPerSM(deviceProp.major, deviceProp.minor) * deviceProp.multiProcessorCount / 1000.0f);
+              printValue("Theoretical Half-Precision Performance:", formatTFlops(halfPrecisionTFLOPS));
+
+              // Calculate theoretical integer operations performance (TOPS)
+              float integerTOPS = (2.0f * deviceProp.clockRate * 1e-6f *
+                                   getCudaCoresPerSM(deviceProp.major, deviceProp.minor) * deviceProp.multiProcessorCount / 1000.0f);
+              printValue("Theoretical Integer Operations Performance:", formatTFlops(integerTOPS) + " TOPS");
+
+              // Calculate memory bandwidth utilization
+              float peakBandwidth = 2.0f * (deviceProp.memoryClockRate * 1000.0f) * (deviceProp.memoryBusWidth / 8.0f) / 1.0e9f;
+              printValue("Memory Bandwidth Utilization:", formatPercentage((peakBandwidth / deviceProp.memoryClockRate) * 100.0f));
+
+              // Architecture-Specific Information
+              printHeader("Architecture-Specific Information:");
+              if (deviceProp.major >= 7)
+              {
+                     printValue("Independent Thread Scheduling:", "Supported (Compute Capability 7.0+)");
+              }
+              else
+              {
+                     printValue("Independent Thread Scheduling:", "Not supported (Compute Capability < 7.0)");
+              }
+              if (deviceProp.major >= 8)
+              {
+                     printValue("Sparse CUDA Array Support:", deviceProp.sparseCudaArraySupported ? "Yes" : "No");
+              }
+              if (deviceProp.major >= 9)
+              {
+                     printValue("Dynamic Shared Memory Per Block:", formatMemorySize(deviceProp.sharedMemPerBlockOptin));
+              }
+
+              // Power and Thermal Information
+              printHeader("Power and Thermal Information:");
+              printValue("Power Management:", deviceProp.managedMemory ? "Supported" : "Not Supported");
 
               printf("\n%s%s================================================%s\n",
                      BOLDMAGENTA, BOLD, RESET);
