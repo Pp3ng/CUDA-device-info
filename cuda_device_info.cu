@@ -2,6 +2,8 @@
 #include <iostream>
 #include <sstream>
 #include <iomanip>
+#include <map>
+#include <utility>
 
 // Color codes for formatting
 #define RESET "\033[0m"
@@ -22,6 +24,55 @@
 #define BOLDMAGENTA "\033[1;35m"
 #define BOLDCYAN "\033[1;36m"
 #define BOLDWHITE "\033[1;37m"
+
+// Architecture information structure
+struct ArchInfo {
+    std::string name;
+    int cudaCoresPerSM;
+    std::string generation;
+    
+    ArchInfo() : name("Unknown"), cudaCoresPerSM(0), generation("Unknown") {}
+    ArchInfo(const std::string& n, int cores, const std::string& gen) 
+        : name(n), cudaCoresPerSM(cores), generation(gen) {}
+};
+
+// Global architecture information map
+std::map<std::pair<int, int>, ArchInfo> architectureMap = {
+    // Fermi (2.x)
+    {{2, 0}, ArchInfo("Fermi", 32, "First Generation")},
+    {{2, 1}, ArchInfo("Fermi", 32, "First Generation")},
+    
+    // Kepler (3.x)
+    {{3, 0}, ArchInfo("Kepler", 192, "Second Generation")},
+    {{3, 2}, ArchInfo("Kepler", 192, "Second Generation")},
+    {{3, 5}, ArchInfo("Kepler", 192, "Second Generation")},
+    {{3, 7}, ArchInfo("Kepler", 192, "Second Generation")},
+    
+    // Maxwell (5.x)
+    {{5, 0}, ArchInfo("Maxwell", 128, "Third Generation")},
+    {{5, 2}, ArchInfo("Maxwell", 128, "Third Generation")},
+    {{5, 3}, ArchInfo("Maxwell", 128, "Third Generation")},
+    
+    // Pascal (6.x)
+    {{6, 0}, ArchInfo("Pascal", 64, "Fourth Generation")},
+    {{6, 1}, ArchInfo("Pascal", 64, "Fourth Generation")},
+    {{6, 2}, ArchInfo("Pascal", 64, "Fourth Generation")},
+    
+    // Volta (7.0)
+    {{7, 0}, ArchInfo("Volta", 64, "Fifth Generation")},
+    
+    // Turing (7.5)
+    {{7, 5}, ArchInfo("Turing", 64, "Fifth Generation")},
+    
+    // Ampere (8.x)
+    {{8, 0}, ArchInfo("Ampere", 128, "Sixth Generation")},
+    {{8, 6}, ArchInfo("Ada Lovelace", 128, "Sixth Generation")},
+    {{8, 7}, ArchInfo("Ada Lovelace", 128, "Sixth Generation")},
+    {{8, 9}, ArchInfo("Ada Lovelace", 128, "Sixth Generation")},
+    
+    // Hopper (9.x)
+    {{9, 0}, ArchInfo("Hopper", 128, "Seventh Generation")}
+};
 
 // Format functions for memory size, frequency, and dimensions of threads and blocks for human-readable output
 std::string formatMemorySize(size_t bytes)
@@ -72,55 +123,35 @@ std::string formatDimension(int x, int y = 0, int z = 0)
        return ss.str();
 }
 
+// Get architecture information from the map
+ArchInfo getArchitectureInfo(int major, int minor)
+{
+    auto key = std::make_pair(major, minor);
+    auto it = architectureMap.find(key);
+    
+    if (it != architectureMap.end()) {
+        return it->second;
+    }
+    
+    // Fallback: try to find by major version only
+    for (const auto& arch : architectureMap) {
+        if (arch.first.first == major) {
+            return arch.second;
+        }
+    }
+    
+    // Return unknown architecture info
+    return ArchInfo("Unknown", 0, "Unknown");
+}
+
 int getCudaCoresPerSM(int major, int minor)
 {
-       switch (major)
-       {
-       case 2:
-              return 32; // Fermi
-       case 3:
-              return 192; // Kepler
-       case 5:
-              return 128; // Maxwell
-       case 6:
-              return 64; // Pascal
-       case 7:
-              return 64; // Volta/Turing
-       case 8:
-              return 128; // Ampere
-       case 9:
-              return 128; // Hopper
-       default:
-              return 0;
-       }
+    return getArchitectureInfo(major, minor).cudaCoresPerSM;
 }
+
 std::string getArchitectureName(int major, int minor)
 {
-       if (major == 2)
-              return "Fermi";
-       if (major == 3)
-              return "Kepler";
-       if (major == 5)
-              return "Maxwell";
-       if (major == 6)
-              return "Pascal";
-       if (major == 7)
-       {
-              if (minor == 0)
-                     return "Volta";
-              if (minor == 5)
-                     return "Turing";
-       }
-       if (major == 8)
-       {
-              if (minor == 0)
-                     return "Ampere";
-              if (minor >= 6)
-                     return "Ada Lovelace";
-       }
-       if (major == 9)
-              return "Hopper";
-       return "Unknown";
+    return getArchitectureInfo(major, minor).name;
 }
 // Functions for printing headers, sub-headers, and key-value pairs
 
@@ -155,16 +186,97 @@ std::string formatPercentage(float value)
        return ss.str();
 }
 
+// Get architecture-specific double-precision ratio
+float getDoublePrecisionRatio(int major, int minor)
+{
+    ArchInfo info = getArchitectureInfo(major, minor);
+    
+    // Architecture-specific FP64/FP32 ratios
+    if (info.name == "Fermi") return 0.5f;      // 1:2 ratio
+    if (info.name == "Kepler") return 0.33f;    // 1:3 ratio  
+    if (info.name == "Maxwell") return 0.03f;   // 1:32 ratio
+    if (info.name == "Pascal") return 0.03f;    // 1:32 ratio for consumer, 1:2 for Tesla
+    if (info.name == "Volta") return 0.5f;      // 1:2 ratio for Tesla
+    if (info.name == "Turing") return 0.03f;    // 1:32 ratio
+    if (info.name == "Ampere") return 0.5f;     // 1:2 ratio for A100, 1:32 for others
+    if (info.name == "Ada Lovelace") return 0.03f; // 1:32 ratio
+    if (info.name == "Hopper") return 0.5f;     // 1:2 ratio
+    
+    return 0.5f; // Default fallback
+}
+
+// Calculate theoretical memory bandwidth in GB/s 
+float calculateMemoryBandwidth(const cudaDeviceProp& prop)
+{
+    return 2.0f * (prop.memoryClockRate * 1000.0f) * (prop.memoryBusWidth / 8.0f) / 1.0e9f;
+}
+
+// Calculate theoretical compute performance
+struct PerformanceMetrics {
+    float singlePrecisionTFLOPS;
+    float doublePrecisionTFLOPS;
+    float halfPrecisionTFLOPS;
+    float integerTOPS;
+    float memoryBandwidth;
+    float computeToMemoryRatio;
+};
+
+PerformanceMetrics calculatePerformanceMetrics(const cudaDeviceProp& prop, const ArchInfo& archInfo)
+{
+    PerformanceMetrics metrics;
+    
+    int cudaCores = archInfo.cudaCoresPerSM * prop.multiProcessorCount;
+    float baseClockGHz = prop.clockRate * 1e-6f;
+    
+    // Single precision: 1 FMA = 2 operations per core per clock
+    metrics.singlePrecisionTFLOPS = 2.0f * baseClockGHz * cudaCores / 1000.0f;
+    
+    // Double precision: architecture dependent
+    float dpRatio = getDoublePrecisionRatio(prop.major, prop.minor);
+    metrics.doublePrecisionTFLOPS = metrics.singlePrecisionTFLOPS * dpRatio;
+    
+    // Half precision: 2x single precision (assuming Tensor cores not counted)
+    metrics.halfPrecisionTFLOPS = metrics.singlePrecisionTFLOPS * 2.0f;
+    
+    // Integer operations: same as single precision
+    metrics.integerTOPS = metrics.singlePrecisionTFLOPS;
+    
+    // Memory bandwidth
+    metrics.memoryBandwidth = calculateMemoryBandwidth(prop);
+    
+    // Compute to memory ratio (operations per byte)
+    metrics.computeToMemoryRatio = (metrics.singlePrecisionTFLOPS * 1000.0f) / metrics.memoryBandwidth;
+    
+    return metrics;
+}
+
 int main(void)
 {
        int deviceCount;
-       cudaGetDeviceCount(&deviceCount);
+       cudaError_t error = cudaGetDeviceCount(&deviceCount);
+       
+       if (error != cudaSuccess)
+       {
+              printf("%sError getting device count: %s%s\n", BOLDRED, cudaGetErrorString(error), RESET);
+              return EXIT_FAILURE;
+       }
 
        if (deviceCount == 0)
        {
               printf("%sNo CUDA devices found.%s\n", BOLDRED, RESET);
               return EXIT_FAILURE;
        }
+       
+       // Print CUDA runtime version
+       int runtimeVersion;
+       cudaRuntimeGetVersion(&runtimeVersion);
+       printf("%s%sCUDA Runtime Version: %d.%d%s\n", BOLDGREEN, BOLD, 
+              runtimeVersion / 1000, (runtimeVersion % 100) / 10, RESET);
+              
+       int driverVersion;
+       cudaDriverGetVersion(&driverVersion);
+       printf("%s%sCUDA Driver Version: %d.%d%s\n", BOLDGREEN, BOLD,
+              driverVersion / 1000, (driverVersion % 100) / 10, RESET);
 
        for (int deviceIndex = 0; deviceIndex < deviceCount; ++deviceIndex)
        {
@@ -173,19 +285,20 @@ int main(void)
 
               // Device Header
               printf("\n%s%s========== CUDA Device #%d Information ==========%s\n",
-                     BOLDMAGENTA, BOLD, deviceIndex, RESET);
-
-              // Basic Device Information
+                     BOLDMAGENTA, BOLD, deviceIndex, RESET);              // Basic Device Information
               printHeader("Basic Device Information:");
               printValue("Device Name:", deviceProp.name);
-              printValue("Compute Capability:", std::to_string(deviceProp.major) + "." + std::to_string(deviceProp.minor) + " (" + getArchitectureName(deviceProp.major, deviceProp.minor) + ")");
+              
+              ArchInfo archInfo = getArchitectureInfo(deviceProp.major, deviceProp.minor);
+              printValue("Compute Capability:", std::to_string(deviceProp.major) + "." + std::to_string(deviceProp.minor) + " (" + archInfo.name + ")");
+              printValue("Architecture Generation:", archInfo.generation);
               printValue("MultiProcessor Count:",
                          std::to_string(deviceProp.multiProcessorCount) + " SMs");
               printValue("Maximum Threads Per MultiProcessor:",
                          std::to_string(deviceProp.maxThreadsPerMultiProcessor) + " threads");
 
-              printValue("CUDA Cores per SM:", std::to_string(getCudaCoresPerSM(deviceProp.major, deviceProp.minor)));
-              printValue("Total CUDA Cores:", std::to_string(getCudaCoresPerSM(deviceProp.major, deviceProp.minor) * deviceProp.multiProcessorCount));
+              printValue("CUDA Cores per SM:", std::to_string(archInfo.cudaCoresPerSM));
+              printValue("Total CUDA Cores:", std::to_string(archInfo.cudaCoresPerSM * deviceProp.multiProcessorCount));
               printValue("Device Compute Mode:", deviceProp.computeMode == cudaComputeModeDefault            ? "Default"
                                                  : deviceProp.computeMode == cudaComputeModeExclusive        ? "Exclusive"
                                                  : deviceProp.computeMode == cudaComputeModeProhibited       ? "Prohibited"
@@ -349,48 +462,44 @@ int main(void)
               printHeader("Persisting L2 Cache Properties:");
               printValue("Persisting L2 Cache Max Size:",
                          formatMemorySize(deviceProp.persistingL2CacheMaxSize));
-#endif
-
-              // Performance Metrics
+#endif              // Performance Metrics
               printHeader("Performance Metrics:");
 
-              // Calculate theoretical memory bandwidth
-              printValue("Theoretical Memory Bandwidth:",
-                         (std::stringstream() << std::fixed << std::setprecision(2)
-                                              << (2.0f * (deviceProp.memoryClockRate * 1000.0f) *
-                                                  (deviceProp.memoryBusWidth / 8.0f) / 1.0e9f) // Memory bandwidth = 2 * (memory clock rate) * (memory bus width / 8) / 1e9
-                                              << " GB/s")
-                             .str());
+              // Calculate performance metrics using the new function
+              PerformanceMetrics metrics = calculatePerformanceMetrics(deviceProp, archInfo);
+              
+              printValue("Theoretical Memory Bandwidth:", 
+                         (std::stringstream() << std::fixed << std::setprecision(2) 
+                                              << metrics.memoryBandwidth << " GB/s").str());
 
-              // Calculate theoretical single-precision floating-point performance (TFLOPS)
-              // Single-precision TFLOPS = 2 * (core clock rate) * (number of cores) / 1e12
-              printValue("Theoretical Single-Precision Performance:", formatTFlops((2.0f * deviceProp.clockRate * 1e-6f *
-                                                                                    getCudaCoresPerSM(deviceProp.major, deviceProp.minor) * deviceProp.multiProcessorCount / 1000.0f)));
-
-              // Calculate theoretical double-precision floating-point performance (TFLOPS)
-              // Note: This is a rough estimate, actual ratio may vary by architecture
-              // Double-precision TFLOPS = Single-precision TFLOPS / 2
-              printValue("Theoretical Double-Precision Performance:", formatTFlops((2.0f * deviceProp.clockRate * 1e-6f *
-                                                                                    getCudaCoresPerSM(deviceProp.major, deviceProp.minor) * deviceProp.multiProcessorCount / 1000.0f) /
-                                                                                   2.0f));
-
-              // Calculate SM utilization
-              // SM utilization = (max threads per SM / max threads per block) * 100
-              printValue("SM Utilization:", formatPercentage((static_cast<float>(deviceProp.maxThreadsPerMultiProcessor) / deviceProp.maxThreadsPerBlock) * 100.0f));
-
-              // Calculate theoretical half-precision floating-point performance (TFLOPS)
-              float halfPrecisionTFLOPS = (4.0f * deviceProp.clockRate * 1e-6f *
-                                           getCudaCoresPerSM(deviceProp.major, deviceProp.minor) * deviceProp.multiProcessorCount / 1000.0f);
-              printValue("Theoretical Half-Precision Performance:", formatTFlops(halfPrecisionTFLOPS));
-
-              // Calculate theoretical integer operations performance (TOPS)
-              float integerTOPS = (2.0f * deviceProp.clockRate * 1e-6f *
-                                   getCudaCoresPerSM(deviceProp.major, deviceProp.minor) * deviceProp.multiProcessorCount / 1000.0f);
-              printValue("Theoretical Integer Operations Performance:", formatTFlops(integerTOPS) + " TOPS");
-
-              // Calculate memory bandwidth utilization
-              float peakBandwidth = 2.0f * (deviceProp.memoryClockRate * 1000.0f) * (deviceProp.memoryBusWidth / 8.0f) / 1.0e9f;
-              printValue("Memory Bandwidth Utilization:", formatPercentage((peakBandwidth / deviceProp.memoryClockRate) * 100.0f));
+              printValue("Theoretical Single-Precision Performance:", formatTFlops(metrics.singlePrecisionTFLOPS));
+              printValue("Theoretical Double-Precision Performance:", formatTFlops(metrics.doublePrecisionTFLOPS));
+              printValue("Theoretical Half-Precision Performance:", formatTFlops(metrics.halfPrecisionTFLOPS));
+              printValue("Theoretical Integer Operations Performance:", formatTFlops(metrics.integerTOPS) + " TOPS");
+              
+              // Additional performance metrics
+              printValue("Compute to Memory Ratio:", 
+                         (std::stringstream() << std::fixed << std::setprecision(2) 
+                                              << metrics.computeToMemoryRatio << " ops/byte").str());
+              
+              // Calculate SM utilization percentage
+              float smUtilization = (static_cast<float>(deviceProp.maxThreadsPerMultiProcessor) / deviceProp.maxThreadsPerBlock) * 100.0f;
+              printValue("Max SM Utilization:", formatPercentage(smUtilization));
+              
+              // Calculate memory efficiency metrics
+              float totalGlobalMemGB = deviceProp.totalGlobalMem / (1024.0f * 1024.0f * 1024.0f);
+              float memoryPerSM = totalGlobalMemGB / deviceProp.multiProcessorCount;
+              printValue("Memory per SM:", 
+                         (std::stringstream() << std::fixed << std::setprecision(2) 
+                                              << memoryPerSM << " GB").str());
+              
+              // Theoretical occupancy metrics
+              int maxBlocksPerSM = deviceProp.maxThreadsPerMultiProcessor / deviceProp.maxThreadsPerBlock;
+              printValue("Max Blocks per SM:", std::to_string(maxBlocksPerSM) + ((maxBlocksPerSM > 1) ? " blocks" : " block"));
+              
+              // Warp efficiency
+              int warpsPerSM = deviceProp.maxThreadsPerMultiProcessor / deviceProp.warpSize;
+              printValue("Max Warps per SM:", std::to_string(warpsPerSM) + " warps");
 
               // Architecture-Specific Information
               printHeader("Architecture-Specific Information:");
